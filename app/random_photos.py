@@ -11,6 +11,11 @@ import googleapiclient
 import google_auth_httplib2
 import httplib2
 import traceback
+import logging
+
+
+logger = logging.getLogger(__name__)
+
 
 def random_date(start, end):
     """
@@ -24,7 +29,7 @@ def random_date(start, end):
 
 
 class RandomPhotos:
-    def __init__(self, blurry_threshold=900, min_resolution=(1920, 1080), album_filter=[], exclude_categories=['UTILITY', 'RECEIPTS', 'DOCUMENTS'], include_categories=[], min_year=2010, threads=5, queue_min=10):
+    def __init__(self, blurry_threshold=900, min_resolution=(1920, 1080), album_filter=[], exclude_categories=['UTILITY', 'RECEIPTS', 'DOCUMENTS'], include_categories=[], min_year=2010, threads=2, queue_min=10):
         self.blurry_threshold = blurry_threshold
         self.min_resolution = min_resolution
         self.album_filter = album_filter
@@ -41,6 +46,7 @@ class RandomPhotos:
         self.creds = False
         self.last_photo = cv2.imread('placeholder.jpg')
         self.google_photos = False
+        logger.debug("Random Photos Initialized")
 
     def check_auth(self):
         try:
@@ -51,6 +57,7 @@ class RandomPhotos:
                 self.google_photos = build('photoslibrary', 'v1', requestBuilder=self.build_request,
                                            http=self.authorized_http,
                                            static_discovery=False)
+                return True
         except AttributeError:
             return False
 
@@ -63,16 +70,16 @@ class RandomPhotos:
     def run(self):
 
         self.running = True
-        print("Running: %s" % self.running)
+        logger.debug("Running: %s" % self.running)
         for i in range(0, self.thread_count):
             thread = threading.Thread(target=self.manage_queue)
-            print("Starting thread %s" % i)
+            logger.debug("Starting thread %s" % i)
             thread.daemon = True
             thread.start()
             self.threads.append(thread)
 
-        print("Done starting threads")
-        print("Running: %s" % self.running)
+        logger.debug("Done starting threads")
+        logger.debug("Running: %s" % self.running)
         return True
 
     def check_running(self):
@@ -85,11 +92,11 @@ class RandomPhotos:
     def manage_queue(self):
         while self.running:
             while not self.check_auth() and self.running:
-                print("Not authenticated - waiting for auth to begin threads.")
+                logger.debug("Not authenticated - waiting for auth to begin threads.")
                 time.sleep(5)
             if len(self.photo_queue) < self.queue_min and self.check_auth():
                 try:
-                    print("Queue less than 4, getting another photo")
+                    logger.info("Queue less than 4, getting another photo")
                     photo_sources = [self.get_random_photo, self.get_random_album_photo]
                     source = random.choice(photo_sources)
                     new_photo = None
@@ -97,7 +104,7 @@ class RandomPhotos:
                         new_photo = source()
                     self.photo_queue.append(new_photo)
                 except Exception as err:
-                    print(err)
+                    logger.error(err)
                     traceback.print_exc()
             else:
                 time.sleep(random.randint(3, 8))
@@ -110,7 +117,7 @@ class RandomPhotos:
             return self.last_photo
 
     def get_albums(self):
-        print("Getting albums")
+        logger.debug("Getting albums")
         request = self.google_photos.albums().list()
         while request is not None:
             res = request.execute()
@@ -118,9 +125,9 @@ class RandomPhotos:
                 if 'title' in album:
                     self.albums.append(album)
                 else:
-                    print(album)
+                    logger.debug(album)
             request = self.google_photos.albums().list_next(request, res)
-        print("Got %s albums" % len(self.albums))
+        logger.debug("Got %s albums" % len(self.albums))
 
     def get_random_album_photo(self):
         if len(self.albums) == 0:
@@ -132,16 +139,16 @@ class RandomPhotos:
         if len(self.album_filter) > 0:
             for album in self.album_filter:
                 try:
-                    print(album)
+                    logger.debug(album)
                     match = next((item for item in self.albums if item["title"].lower() == album.lower()), None)
                     if match:
                         selected_albums.append(match)
                 except KeyError as err:
-                    print(err)
+                    logger.error(err)
         else:
             selected_albums = self.albums
 
-        print("Selecting random album from %s options" % len(selected_albums))
+        logger.debug("Selecting random album from %s options" % len(selected_albums))
         album = random.choice(selected_albums)
 
         body = {"albumId": album['id']}
@@ -164,27 +171,27 @@ class RandomPhotos:
             photos.pop(photos.index(random_photo))
 
             if random_photo['mediaMetadata']['width'] < random_photo['mediaMetadata']['height']:
-                print("Image is vertical")
-                print(random_photo['baseUrl'])
+                logger.debug("Image is vertical")
+                logger.debug(random_photo['baseUrl'])
                 continue
 
             if int(random_photo['mediaMetadata']['width']) < self.min_resolution[0]:
-                print("Image too small")
+                logger.debug("Image too small")
                 continue
 
             url_response = urllib.request.urlopen(random_photo['baseUrl'])
             img = cv2.imdecode(np.array(bytearray(url_response.read()), dtype=np.uint8), -1)
 
             laplacian_var = cv2.Laplacian(img, cv2.CV_64F).var()
-            print(laplacian_var)
+            logger.debug(laplacian_var)
             if laplacian_var < self.blurry_threshold:
-                print("Image blurry")
+                logger.debug("Image blurry")
                 continue
 
             # Get Full Size Image
             url = "%s=w%s-h%s" % (random_photo['baseUrl'], random_photo['mediaMetadata']['width'],
                                   random_photo['mediaMetadata']['height'])
-            print(url)
+            logger.debug(url)
             url_response = urllib.request.urlopen(url)
             img_full = cv2.imdecode(np.array(bytearray(url_response.read()), dtype=np.uint8), -1)
             result_image = img_full
@@ -208,8 +215,8 @@ class RandomPhotos:
             end_month = random_date_start.month
             end_day = random_date_start.day
 
-            print(random_date_start)
-            print(random_date_end)
+            logger.debug(random_date_start)
+            logger.debug(random_date_end)
             body = {"filters": {"mediaTypeFilter": {"mediaTypes": ["PHOTO"]},
                                 "contentFilter": {},
                                 "dateFilter": {"ranges": [
@@ -224,36 +231,36 @@ class RandomPhotos:
 
             items = self.google_photos.mediaItems().search(body=body).execute()
             if len(items) == 0:
-                print("No photos found for date.")
+                logger.debug("No photos found for date.")
                 continue
 
             if "mediaItems" in items:
                 random_photo = random.choice(items['mediaItems'])
-                print(random_photo)
+                logger.debug(random_photo)
                 # Filter for landscape photos
 
                 if random_photo['mediaMetadata']['width'] < random_photo['mediaMetadata']['height']:
-                    print("Image is vertical")
-                    print(random_photo['baseUrl'])
+                    logger.debug("Image is vertical")
+                    logger.debug(random_photo['baseUrl'])
                     continue
 
                 if int(random_photo['mediaMetadata']['width']) < self.min_resolution[0]:
-                    print("Image too small")
+                    logger.debug("Image too small")
                     continue
 
                 url_response = urllib.request.urlopen(random_photo['baseUrl'])
                 img = cv2.imdecode(np.array(bytearray(url_response.read()), dtype=np.uint8), -1)
 
                 laplacian_var = cv2.Laplacian(img, cv2.CV_64F).var()
-                print(laplacian_var)
+                logger.debug(laplacian_var)
                 if laplacian_var < self.blurry_threshold:
-                    print("Image blurry")
+                    logger.debug("Image blurry")
                     continue
 
                 # Get Full Size Image
                 url = "%s=w%s-h%s" % (random_photo['baseUrl'], random_photo['mediaMetadata']['width'],
                                       random_photo['mediaMetadata']['height'])
-                print(url)
+                logger.debug(url)
                 url_response = urllib.request.urlopen(url)
                 img_full = cv2.imdecode(np.array(bytearray(url_response.read()), dtype=np.uint8), -1)
                 result_image = img_full
