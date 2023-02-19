@@ -12,7 +12,5 @@ RUN pip3 install gunicorn
 
 COPY app /app
 COPY start.sh /app
-COPY gunicorn.conf /app
-COPY logging.conf /app
 
 ENTRYPOINT ["/app/start.sh"]
